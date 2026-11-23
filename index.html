@@ -1,0 +1,220 @@
+
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ABO ONLINE</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at top,#263c55,#080d18 70%);color:white;font-family:Arial,sans-serif;text-align:center;min-height:100vh;padding:20px}
+h1{font-size:42px;letter-spacing:5px;text-shadow:0 0 20px #00d9ff;margin:15px}
+.sub{color:#a9c6dc;margin-bottom:25px}
+.panel{max-width:650px;margin:20px auto;background:#172538;border:1px solid #46617e;border-radius:22px;padding:22px;box-shadow:0 15px 40px #0008}
+button,input{font-size:16px;border-radius:12px;padding:13px;margin:6px;border:0}
+button{background:linear-gradient(135deg,#00c6ff,#0072ff);color:white;font-weight:bold;cursor:pointer}
+button:disabled{opacity:.4}
+input{width:min(90%,360px);background:#eaf3ff;color:#111}
+#game{display:none}
+.table{background:radial-gradient(ellipse,#176b54,#07372f);border:8px solid #704b30;border-radius:50px;padding:20px;margin:18px auto;max-width:650px;min-height:220px;box-shadow:inset 0 0 35px #0008,0 12px 25px #0008}
+.cards{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin:15px auto}
+.card{width:68px;height:100px;border:3px solid white;border-radius:12px;color:white;font-size:19px;font-weight:bold;display:flex;align-items:center;justify-content:center;box-shadow:0 5px 12px #0008;text-shadow:1px 2px 3px #000;cursor:pointer;transform:rotate(-2deg)}
+.card:active{transform:translateY(-8px)}
+.red{background:linear-gradient(140deg,#ff7777,#b50020)}
+.blue{background:linear-gradient(140deg,#66c9ff,#0647b8)}
+.green{background:linear-gradient(140deg,#6dff9d,#08753b)}
+.yellow{background:linear-gradient(140deg,#fff27a,#d69a00)}
+.wild{background:conic-gradient(#e33 0 25%,#168bdf 0 50%,#e6c400 0 75%,#19a45a 0)}
+.back{background:linear-gradient(135deg,#273d62,#111a31);border:3px solid #9ab8df}
+.small{font-size:13px;color:#c6d8ea}
+#status{font-weight:bold;color:#ffe58a;min-height:25px}
+#room{font-size:13px;overflow-wrap:anywhere;color:#9fe9ff}
+#colorPicker{display:none}
+</style>
+</head>
+<body>
+<h1>ABO ONLINE</h1>
+<div class="sub">3D CARD BATTLE • TWO PLAYERS</div>
+
+<div id="menu" class="panel">
+<h2>Oyuna Hoş Geldin</h2>
+<button onclick="createRoom()">ODA OLUŞTUR</button>
+<p class="small">Arkadaşının oluşturduğu oda kodunu gir:</p>
+<input id="roomInput" placeholder="Oda kodunu buraya yapıştır">
+<br>
+<button onclick="joinRoom()">ODAYA KATIL</button>
+<p id="status">Bağlantı bekleniyor...</p>
+<p id="room"></p>
+</div>
+
+<div id="game">
+<div class="panel">
+<div id="opponent">Rakip: bekleniyor</div>
+<div class="table">
+<p>MASA</p>
+<div id="topCard" class="cards"></div>
+<div id="turnInfo"></div>
+</div>
+<div id="statusGame"></div>
+<div id="colorPicker">
+<p>Renk seç:</p>
+<button onclick="chooseColor('red')">Kırmızı</button>
+<button onclick="chooseColor('blue')">Mavi</button>
+<button onclick="chooseColor('green')">Yeşil</button>
+<button onclick="chooseColor('yellow')">Sarı</button>
+</div>
+<h3>Senin Kartların</h3>
+<div id="hand" class="cards"></div>
+<button onclick="drawCard()">KART ÇEK</button>
+<button onclick="callAbo()">ABO!</button>
+</div>
+</div>
+
+<script>
+let peer,conn,host=false,myTurn=false;
+let state=null,myIndex=0,pendingWild=false;
+
+function say(t){document.getElementById('status').textContent=t}
+function gameSay(t){document.getElementById('statusGame').textContent=t}
+function makePeer(){
+ return new Promise((resolve,reject)=>{
+  if(typeof Peer==="undefined"){reject(new Error("PeerJS yüklenemedi. İnternet bağlantısını kontrol et."));return}
+  peer=new Peer({
+   host:"0.peerjs.com",
+   port:443,
+   path:"/",
+   secure:true,
+   key:"peerjs",
+   debug:1
+  });
+  peer.on("open",id=>resolve(id));
+  peer.on("error",e=>{say("Bağlantı hatası: "+e.type);reject(e)});
+  peer.on("disconnected",()=>say("Sunucu bağlantısı kesildi. Sayfayı yenile."));
+ });
+}
+function createRoom(){
+ host=true;myIndex=0;say("Sunucuya bağlanılıyor...");
+ makePeer().then(id=>{
+  document.getElementById("room").textContent="ODA KODUN: "+id+" — Bu kodu arkadaşına gönder.";
+  say("Rakibin bağlanması bekleniyor...");
+  peer.on("connection",c=>{
+   if(conn){c.close();return}
+   conn=c;setupConnection();
+  });
+ }).catch(()=>{});
+}
+function joinRoom(){
+ let id=document.getElementById("roomInput").value.trim();
+ if(!id){say("Önce oda kodunu gir.");return}
+ host=false;myIndex=1;say("Odaya bağlanılıyor...");
+ makePeer().then(()=>{
+  conn=peer.connect(id,{reliable:true});
+  setupConnection();
+  setTimeout(()=>{if(!conn.open)say("Bağlantı kurulamadı. Oda kodunu kontrol et.");},15000);
+ }).catch(()=>{});
+}
+function setupConnection(){
+ conn.on("open",()=>{
+  say("Bağlantı kuruldu!");
+  if(host){
+   state=newGame();
+   sendState();
+   showGame();
+  }
+ });
+ conn.on("data",msg=>{
+  if(host && msg.type==="action") handleAction(1,msg.action,msg.value);
+  if(!host && msg.type==="state"){
+   state=msg.state;
+   showGame();
+  }
+ });
+ conn.on("error",()=>say("Bağlantı hatası. Tekrar deneyin."));
+ conn.on("close",()=>say("Rakibin bağlantısı kesildi."));
+}
+function newGame(){
+ let deck=[];
+ for(let color of ["red","blue","green","yellow"]){
+  for(let n=0;n<=9;n++)deck.push({color,value:String(n)});
+  for(let v of ["+2","Ters","Pas"])deck.push({color,value:v});
+ }
+ for(let i=0;i<4;i++)deck.push({color:"wild",value:"Renk"});
+ deck.sort(()=>Math.random()-.5);
+ let hands=[deck.splice(0,7),deck.splice(0,7)];
+ let first=deck.pop();
+ while(first.color==="wild"){deck.unshift(first);first=deck.pop()}
+ return {deck,hands,top:first,turn:0,color:first.color,over:false,message:"Oyun başladı!"};
+}
+function sendState(){
+ if(conn&&conn.open)conn.send({type:"state",state});
+ showGame();
+}
+function action(a,v){
+ if(host)handleAction(0,a,v);
+ else if(conn&&conn.open)conn.send({type:"action",action:a,value:v});
+}
+function handleAction(player,a,v){
+ if(!state||state.over||player!==state.turn)return;
+ let hand=state.hands[player];
+ if(a==="draw"){
+  if(!state.deck.length){state.message="Kart destesi bitti!";sendState();return}
+  hand.push(state.deck.pop());
+  state.turn=1-state.turn;
+  state.message="Kart çekildi.";
+ }
+ if(a==="play"){
+  let card=hand[v];
+  if(!card)return;
+  if(card.color!=="wild"&&card.color!==state.color&&card.value!==state.top.value)return;
+  hand.splice(v,1);state.top=card;
+  if(card.color==="wild"){state.message="Renk seçimi bekleniyor.";pendingWild=true;state.pendingPlayer=player;sendState();return}
+  applyCard(card,player);
+ }
+ if(a==="color"&&pendingWild&&state.pendingPlayer===player){
+  state.color=v;pendingWild=false;
+  if(state.top.value==="+4"){
+   for(let i=0;i<4;i++)state.hands[1-player].push(state.deck.pop());
+   state.turn=player;
+  }else state.turn=1-player;
+  state.message="Renk seçildi: "+v;
+ }
+ if(a==="abo")state.message="Oyuncu ABO dedi!";
+ if(state.hands[player].length===0){state.over=true;state.message=(player===0?"Sen":"Rakibin")+" kazandı!";}
+ sendState();
+}
+function applyCard(card,player){
+ if(card.value==="+2"){
+  for(let i=0;i<2;i++)state.hands[1-player].push(state.deck.pop());
+  state.turn=player;
+ }else if(card.value==="Pas"||card.value==="Ters"){
+  state.turn=player;
+ }else state.turn=1-player;
+ state.message=card.value+" oynandı.";
+}
+function showGame(){
+ if(!state)return;
+ document.getElementById("menu").style.display="none";
+ document.getElementById("game").style.display="block";
+ document.getElementById("opponent").textContent="Rakibin: "+state.hands[1-myIndex].length+" kart";
+ document.getElementById("topCard").innerHTML='<div class="card '+state.top.color+'">'+state.top.value+'</div>';
+ document.getElementById("turnInfo").textContent="Sıradaki: "+(state.turn===myIndex?"SEN":"RAKİP")+" • Renk: "+state.color;
+ gameSay(state.message);
+ let hand=document.getElementById("hand");
+ hand.innerHTML="";
+ state.hands[myIndex].forEach((c,i)=>{
+  let el=document.createElement("button");
+  el.className="card "+c.color;
+  el.textContent=c.value;
+  el.disabled=state.turn!==myIndex||state.over||pendingWild;
+  el.onclick=()=>action("play",i);
+  hand.appendChild(el);
+ });
+ document.getElementById("colorPicker").style.display=pendingWild&&state.pendingPlayer===myIndex?"block":"none";
+}
+function drawCard(){if(state&&state.turn===myIndex&&!state.over)action("draw")}
+function callAbo(){if(state&&state.turn===myIndex&&state.hands[myIndex].length===1)action("abo")}
+function chooseColor(c){action("color",c)}
+</script>
+</body>
+</html>
